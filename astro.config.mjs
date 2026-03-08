@@ -7,7 +7,7 @@ import rehypeKatex from 'rehype-katex';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://abokhalill.github.io',
-	base: '/lshaz-docs',
+	base: '/lshaz-writeup',
 	markdown: {
 		remarkPlugins: [remarkMath],
 		rehypePlugins: [rehypeKatex],
