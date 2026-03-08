@@ -1,0 +1,24 @@
+---
+import Default from '@astrojs/starlight/components/Head.astro';
+---
+
+<Default {...Astro.props}><slot /></Default>
+
+<!-- Mermaid.js for diagrams -->
+<script type="module">
+	import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+	mermaid.initialize({
+		startOnLoad: true,
+		theme: 'dark',
+		themeVariables: {
+			darkMode: true,
+			background: '#0a0e17',
+			primaryColor: '#1e3a5f',
+			primaryTextColor: '#e8edf5',
+			primaryBorderColor: '#2a3650',
+			lineColor: '#38bdf8',
+			secondaryColor: '#0c1d33',
+			tertiaryColor: '#141c2e',
+		},
+	});
+</script>

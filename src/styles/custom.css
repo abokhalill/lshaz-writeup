@@ -1,0 +1,152 @@
+/* ==========================================================================
+   lshaz — Deep Ocean Theme
+   High-contrast dark palette inspired by Jane Street / Cloudflare engineering blogs.
+   ========================================================================== */
+
+:root {
+	--sl-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+		Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+	--sl-font-system-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* ---------- Dark mode (primary) ---------- */
+:root[data-theme='dark'] {
+	/* Surface palette — deep ocean */
+	--sl-color-bg: #0a0e17;
+	--sl-color-bg-nav: #0d1220;
+	--sl-color-bg-sidebar: #0d1220;
+	--sl-color-bg-accent: rgba(56, 189, 248, 0.08);
+
+	/* Hairlines */
+	--sl-color-hairline: #1a2236;
+	--sl-color-hairline-light: #141c2e;
+
+	/* Text hierarchy */
+	--sl-color-white: #e8edf5;
+	--sl-color-gray-1: #c4cdd9;
+	--sl-color-gray-2: #8b99ad;
+	--sl-color-gray-3: #586881;
+	--sl-color-gray-4: #2a3650;
+	--sl-color-gray-5: #1a2236;
+	--sl-color-gray-6: #111827;
+
+	/* Accent — electric cyan / blue */
+	--sl-color-accent-low: #0c1d33;
+	--sl-color-accent: #38bdf8;
+	--sl-color-accent-high: #bae6fd;
+
+	/* Text colors */
+	--sl-color-text: #c4cdd9;
+	--sl-color-text-accent: #38bdf8;
+
+	/* Banner / hero */
+	--sl-color-black: #e8edf5;
+}
+
+/* ---------- Light mode fallback (still dark-biased) ---------- */
+:root[data-theme='light'] {
+	--sl-color-bg: #f8fafc;
+	--sl-color-bg-nav: #f1f5f9;
+	--sl-color-bg-sidebar: #f1f5f9;
+	--sl-color-hairline: #cbd5e1;
+	--sl-color-hairline-light: #e2e8f0;
+	--sl-color-accent-low: #e0f2fe;
+	--sl-color-accent: #0284c7;
+	--sl-color-accent-high: #0c4a6e;
+	--sl-color-text: #1e293b;
+	--sl-color-text-accent: #0369a1;
+	--sl-color-white: #0f172a;
+	--sl-color-gray-1: #334155;
+	--sl-color-gray-2: #64748b;
+	--sl-color-gray-3: #94a3b8;
+	--sl-color-gray-4: #cbd5e1;
+	--sl-color-gray-5: #e2e8f0;
+	--sl-color-gray-6: #f1f5f9;
+	--sl-color-black: #0f172a;
+}
+
+/* ---------- Typography refinements ---------- */
+html {
+	font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.sl-markdown-content h1 {
+	font-size: 2rem;
+}
+
+/* Code blocks — deeper contrast */
+:root[data-theme='dark'] .expressive-code {
+	--ec-codeBg: #080c14;
+	--ec-codeBorderCol: #1a2236;
+}
+
+:root[data-theme='dark'] .expressive-code pre {
+	border: 1px solid var(--ec-codeBorderCol);
+}
+
+/* Inline code */
+:root[data-theme='dark'] .sl-markdown-content :not(pre) > code {
+	background: #141c2e;
+	color: #7dd3fc;
+	border: 1px solid #1e293b;
+	border-radius: 4px;
+	padding: 0.15em 0.35em;
+	font-size: 0.875em;
+}
+
+/* Links */
+.sl-markdown-content a {
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+}
+
+.sl-markdown-content a:hover {
+	text-decoration-thickness: 2px;
+}
+
+/* Sidebar refinements */
+nav.sidebar .top-level > li + li {
+	border-top: 1px solid var(--sl-color-hairline);
+}
+
+/* KaTeX overflows */
+.sl-markdown-content .katex-display {
+	overflow-x: auto;
+	overflow-y: hidden;
+	padding: 0.5em 0;
+}
+
+/* Mermaid diagram containers */
+.sl-markdown-content .mermaid {
+	background: transparent;
+	text-align: center;
+	margin: 1.5rem 0;
+}
+
+/* Scrollbar — subtle */
+:root[data-theme='dark'] ::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-track {
+	background: #0a0e17;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb {
+	background: #2a3650;
+	border-radius: 3px;
+}
+
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+	background: #3b4f6b;
+}
