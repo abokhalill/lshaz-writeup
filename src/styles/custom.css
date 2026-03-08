@@ -307,8 +307,12 @@ blockquote {
 
 .engineering-hero {
 	max-width: 800px;
-	padding: 1.25rem 0 1rem;
-	border-top: 1px solid var(--sl-color-hairline);
+	padding: 1.5rem 0 1rem;
+}
+
+[data-has-hero] .page-title,
+[data-has-hero] .hero {
+	display: none !important;
 }
 
 .engineering-hero__grid {
