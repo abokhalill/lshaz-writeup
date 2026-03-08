@@ -1,0 +1,28 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  href: string;
+  cta?: string;
+}
+
+const {
+  title,
+  description,
+  href,
+  cta = 'Get Started',
+} = Astro.props as Props;
+---
+
+<section class="engineering-hero">
+  <div class="engineering-hero__grid">
+    <div class="engineering-hero__title-block">
+      <p class="engineering-hero__eyebrow">ENGINEERING DEEP DIVE</p>
+      <h1 class="engineering-hero__title">{title}</h1>
+    </div>
+    <div class="engineering-hero__content-block">
+      <p class="engineering-hero__description">{description}</p>
+      <a class="engineering-hero__cta" href={href}>{cta}</a>
+    </div>
+  </div>
+</section>

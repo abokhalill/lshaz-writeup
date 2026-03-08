@@ -1,11 +1,21 @@
 ---
 title: lshaz
 description: Technical writeups by Yousef Mahmoud.
-template: splash
-hero:
-  tagline: by Yousef Mahmoud
-  actions:
-    - text: Writeups
-      link: /lshaz-writeup/writeups/abseil-deep-dive/
-      icon: right-arrow
 ---
+
+import EngineeringHero from '../../components/EngineeringHero.astro';
+
+<EngineeringHero
+	title="lshaz"
+	description="Clang/LLVM-based compile-time analysis for false sharing, atomic contention, cache-line geometry, and other microarchitectural hazards in production C++."
+	href="/lshaz-writeup/writeups/abseil-deep-dive/"
+	cta="Get Started"
+/>
+
+## Overview
+
+lshaz is a technical documentation and writeup site focused on static microarchitectural analysis.
+
+The current deep dive examines what happens when you run the analyzer against Abseil-C++ and interpret the results as concrete hardware trade-offs instead of abstract warnings.
+
+Primary author: **Yousef Mahmoud**.

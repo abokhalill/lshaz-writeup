@@ -16,13 +16,6 @@ export default defineConfig({
 		starlight({
 			title: 'lshaz',
 			description: 'Technical deep dives and systems engineering writeups.',
-			social: [
-				{
-					icon: 'github',
-					label: 'GitHub',
-					href: 'https://github.com/abokhalill/lshaz',
-				},
-			],
 			sidebar: [
 				{
 					label: 'Writeups',
