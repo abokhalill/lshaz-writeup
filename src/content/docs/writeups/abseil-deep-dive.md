@@ -1,49 +1,56 @@
 ---
 title: "We ran lshaz on Abseil. Here's what compile-time microarchitectural analysis actually finds in production C++."
-description: "lshaz is a Clang/LLVM-based static analysis tool that detects microarchitectural latency hazards — false sharing, atomic contention, cache line geometry problems — at compile time, before code ships."
+description: "lshaz is a Clang/LLVM-based static analysis tool that detects microarchitectural latency hazards. That includes false sharing, atomic contention, cache line geometry problems. All at compile time, before code ships."
 ---
 
-*lshaz is a Clang/LLVM-based static analysis tool that detects microarchitectural latency hazards — false sharing, atomic contention, cache line geometry problems — at compile time, before code ships.*
-
----
-
-The standard feedback loop for microarchitectural performance problems in C++ looks like this: write code, ship it, run `perf c2c` or `perf stat` in production, discover that two fields on the same struct are destroying your L1 cache hit rate across cores, fix it, repeat. The loop is reactive. The diagnosis happens after the damage is in production.
-
-lshaz is an attempt to move that loop earlier — to the point where a struct layout is being written, not the point where it's being profiled. It's a Clang LibTooling analysis pass that reasons about struct field geometry, atomic ordering choices, thread escape, and NUMA placement using the same information the CPU will use at runtime: byte offsets, cache line boundaries, memory ordering semantics, and hardware coherence protocol costs.
-
-To test whether the tool produces signal worth acting on, we ran it against the Abseil-C++ codebase — Google's widely-used C++ common libraries, maintained by engineers who are not casual about performance. The result was 256 diagnostics across the codebase. This post is about what those findings actually mean.
+*lshaz is a Clang/LLVM-based static analysis tool that detects microarchitectural latency hazards. That includes false sharing, atomic contention, cache line geometry problems. All at compile time, before code ships.*
 
 ---
 
-## The Anchor Finding: `ThreadIdentity`
+Let me tell you something that most people writing C++ don't want to admit.
 
-The highest-signal finding lshaz produced — flagged simultaneously by three separate rules with 88–90% confidence at the Proven evidence tier, and deduplicated across 36 translation units — is `absl::base_internal::ThreadIdentity`.
+The performance problem you'll spend three days hunting next quarter? It's already in your codebase right now. It's sitting there quietly in a struct definition, in a field ordering that made total sense when someone wrote it, in an atomic variable placed four bytes away from the field that every other thread also writes. The source code looks fine. The tests pass. The code review was clean. And the hardware is silently paying a tax on every cache coherence round-trip that nobody asked for and nobody knows about.
 
-Here is the relevant portion of the struct layout (from `absl/base/internal/thread_identity.h`):
+You won't find it until production load puts enough concurrent threads on it that `perf c2c` finally lights up. By then it's been shipping for six months.
+
+This is the problem lshaz exists to solve. It's a Clang LibTooling analysis pass that reasons about the same things the CPU reasons about — byte offsets, cache line boundaries, memory ordering semantics, MESI coherence protocol costs — and it does it at compile time, from source, before any of that ends up in production.
+
+To find out if it actually works, we pointed it at Abseil. Google's C++ common libraries. Code maintained by engineers who think about performance for a living, on a codebase that runs inside essentially everything Google ships. If lshaz was going to embarrass itself, this was the place.
+
+256 diagnostics. Here's what they mean.
+
+---
+
+## The Finding That Stopped Us
+
+The highest-confidence result — flagged by three independent rules simultaneously, 88–90% confidence at the Proven evidence tier, confirmed across 36 translation units — was a struct called `ThreadIdentity`.
+
+You've probably never heard of it. It lives in `absl/base/internal/thread_identity.h` and it's the per-thread state object that Abseil's synchronization infrastructure hangs everything on. Every active thread has one. The Mutex implementation knows about it. The CondVar implementation knows about it. It's load-bearing in a very quiet way.
+
+Here's the relevant part of the layout:
 
 ```cpp
 struct ThreadIdentity {
-  // Must be the first member. PerThreadSynch::kAlignment aligned.
-  PerThreadSynch per_thread_synch;   // offset 0,   size 64B
-
+  PerThreadSynch per_thread_synch;     // offset 0,   size 64B
+  
   struct WaiterState {
     alignas(void*) char data[256];
-  } waiter_state;                    // offset 64,  size 256B
+  } waiter_state;                      // offset 64,  size 256B
 
   std::atomic<int>* blocked_count_ptr; // offset 320, size 8B
 
   // "read by a ticker thread as a hint"
-  std::atomic<int>  ticker;          // offset 328
-  std::atomic<int>  wait_start;      // offset 332
-  std::atomic<bool> is_idle;         // offset 336
+  std::atomic<int>  ticker;            // offset 328
+  std::atomic<int>  wait_start;        // offset 332
+  std::atomic<bool> is_idle;           // offset 336
   
-  ThreadIdentity* next;              // offset 340
+  ThreadIdentity* next;                // offset 340
 };
 ```
 
-At 64-byte cache line boundaries on x86-64, offset 320 begins line 5 (zero-indexed). `blocked_count_ptr` sits at 320–327. `ticker`, `wait_start`, and `is_idle` land at 328, 332, and 336 — all on line 5. Three independent atomic fields, written by different threads, sharing one cache line.
+Now here's the part that matters. On x86-64, cache lines are 64 bytes. Offset 320 begins cache line 5. `blocked_count_ptr` occupies bytes 320–327. Then `ticker` at 328, `wait_start` at 332, `is_idle` at 336. All three atomic fields, written by different threads, are packed onto the same 64-byte line.
 
-lshaz's diagnosis:
+lshaz saw it immediately:
 
 ```
 [Critical] FL002 — False Sharing  conf=88%  [proven]
@@ -53,39 +60,49 @@ atomic fields 'ticker' and 'is_idle' share line 5.
 atomic fields 'wait_start' and 'is_idle' share line 5.
 line 5: 3 atomic + 2 non-atomic mutable fields — mixed write surface.
 cross-TU: deduplicated from 36 translation units.
-
-[Critical] FL090 — Compound Hazard Amplification  conf=88%
-352B across 6 cache lines. 4 atomic fields across 2 lines.
-2 fields straddle line boundaries: split load/store penalty compounds
-with coherence cost. 21 mutable fields across 6 lines: wide write surface.
 ```
 
-**This is not a bug.** The Abseil source includes this comment directly above the three atomics: *"The following variables are mostly read/written just by the thread itself. The only exception is that these are read by a ticker thread as a hint."*
-
-The Abseil authors knew. They made a deliberate trade-off: the ticker thread reads these fields as hints — it doesn't need them to be isolated. The coherence traffic is accepted as a cost of the design. The struct layout note elsewhere in the file is emphatic: *"NOTE: The layout of fields in this structure is critical, please do not add, remove, or modify the field placements without fully auditing the layout."*
-
-What lshaz found here is not an oversight. It is a **deliberate hardware trade-off that is invisible to any reader of the source** unless they mentally compute byte offsets, know the cache line width, and reason about the MESI coherence protocol. The Abseil authors did that work. But anyone reading this struct in a downstream codebase, or inheriting it in a fork, has no indication from the source that line 5 is a coherence hot zone.
-
-This is precisely the class of problem lshaz is designed to surface.
+Every time the ticker thread writes `ticker`, the hardware has to acquire exclusive ownership of that cache line. Which means every other core that holds a copy of that line, including the thread that owns the identity and is actively reading `wait_start`, has to invalidate its copy and wait for the line to come back. That's the MESI coherence protocol doing exactly what it was designed to do, and it costs you every single time.
 
 ---
 
-## What Makes This Structurally Interesting: The Compound Hazard
+## Before You Write the Bug Report
 
-`ThreadIdentity` triggers lshaz's FL090 (Compound Hazard Amplification) rule because multiple independent hazard indicators converge on the same type:
+Stop. This is not a bug.
 
-- **Cache spanning**: 352B across 6 lines, with 2 fields straddling boundaries (split load/store on every access)
-- **False sharing**: 3 atomic pairs confirmed on line 5
-- **Wide write surface**: 21 mutable fields across 6 lines
-- **Thread escape**: confirmed via 36 TU inclusions and structural atomic evidence
+The Abseil source is explicit about it. Right above those three atomics:
 
-When these co-occur, the hardware cost is not additive — it's multiplicative. A split load across a line boundary on a field that is also a coherence contention point means every access pays both the split-load penalty and the RFO (Read For Ownership) round-trip to acquire the line. The compound rule exists specifically to identify this amplification, which single-rule analysis misses.
+*"The following variables are mostly read/written just by the thread itself. The only exception is that these are read by a ticker thread as a hint."*
+
+The Abseil authors knew. They looked at this layout, computed the byte offsets, the same ones lshaz computed, and decided the coherence traffic was an acceptable cost. The ticker thread reads these fields as hints. It doesn't need them isolated. The design is intentional.
+
+And if you had any doubt, there's this, elsewhere in the same file:
+
+*"NOTE: The layout of fields in this structure is critical, please do not add, remove, or modify the field placements without fully auditing the layout."*
+
+These are engineers telling you they did the work. They understood what the hardware would do and made a conscious call.
+
+Here's what lshaz actually found: **a deliberate hardware trade-off that is completely invisible to anyone who didn't do that work themselves.** If you're reading `ThreadIdentity` in a fork, or inheriting a system built on it, or trying to understand why your synchronization-heavy code has unexpected coherence traffic, there is nothing in the source that tells you cache line 5 is a known hot zone. No `alignas`, no comment on the field declarations, no `// COHERENCE_COST_ACCEPTED`. The knowledge lives in the heads of the people who wrote it.
+
+That's the gap. lshaz closes it.
 
 ---
 
-## The Second Finding Worth Examining: `HashtablezInfo`
+## Why This One Finding Is Actually Four
 
-The second-highest confidence finding is `absl::container::internal::HashtablezInfo` in `absl/container/internal/hashtablez_sampler.h`. This is a sampling/telemetry struct — it collects statistics about hash table behavior for Abseil's internal profiling infrastructure.
+`ThreadIdentity` doesn't just trigger FL002. It hits FL001 and FL090 simultaneously, and the combination matters.
+
+FL001 caught that the struct spans 352 bytes across 6 cache lines, with 2 fields straddling line boundaries, meaning every access to those fields is a split load or split store, touching two cache lines instead of one.
+
+FL090 is the compound hazard rule, and it fires when multiple hazard types converge on the same type. Here they all arrive at once: cache spanning, false sharing, straddling fields, wide write surface, confirmed thread escape. When these stack, the hardware cost isn't additive, it multiplies. A field that straddles a cache line boundary on a struct that also has active coherence contention pays the split-load penalty *and* the RFO round-trip *on the same access*. The compound rule exists specifically because single-rule analysis misses this.
+
+The 36 TU deduplication count is what makes the Proven tier confidence legitimate. The tool saw this struct diagnosed from 36 independent translation unit compilation contexts. That's not a tool artifact, that's real evidence that this type is genuinely ubiquitous across the codebase.
+
+---
+
+## The Second Finding: When Atomic Density Is the Problem
+
+The other finding worth looking at is `HashtablezInfo` in `absl/container/internal/hashtablez_sampler.h`, which is Abseil's internal hash table telemetry struct.
 
 ```
 [Critical] FL002  conf=88%  [proven]
@@ -96,44 +113,46 @@ Line 1: max_probe_length, total_probe_length, hashes_bitwise_or,
 cross-TU: deduplicated from 7 translation units.
 ```
 
-10 atomic fields concentrated across 2 cache lines, 20 atomic pairs generating MESI invalidations. This is a sampling struct, so the false sharing is likely an intentional cost — sampling infrastructure is not expected to be in the critical path. But it is a concrete example of what the tool finds when atomic density is high and layout is not explicitly managed.
+Ten atomic fields, two cache lines, twenty pairs that each generate guaranteed MESI invalidations. This is a sampling struct, it's not on the critical path by design, and the false sharing is almost certainly an intentional cost. But it illustrates a different failure mode: not "we put two fields near each other that happen to share a line," but "we have so many atomics in this struct that false sharing is geometrically inevitable regardless of ordering."
+
+At 5 atomics per line, every write to any field invalidates the line for every thread reading any of the other four. That's the design you get when you reach for atomics without also reaching for `alignas`.
 
 ---
 
-## The 256 Number in Context
+## What 256 Actually Means
 
-The full scan produced 256 diagnostics. The distribution matters:
+Not 256 bugs. If you walk away with that impression, the tool failed to communicate.
 
-The **Proven tier** findings — where lshaz has both structural evidence (field layout, atomic types, escape analysis) and cross-TU confirmation — are the ones shown above. The Critical/Proven findings represent cases where the hardware reasoning is unambiguous given the struct layout.
+The **Proven tier** findings, where lshaz has structural evidence confirmed across multiple TUs, are the ones above. The hardware reasoning is unambiguous: given the struct layout, given the cache line geometry, given confirmed thread escape, this is what the CPU does. Whether that cost matters depends entirely on whether that path is hot in your workload.
 
-The **Likely** and **Speculative** tier findings represent cases where one evidence dimension is missing: the struct escapes to threads per structural analysis but isn't confirmed via cross-TU multiplicity, or the field co-location is present but the access pattern isn't confirmed hot. These are hypotheses, not verdicts.
+The **Likely** findings are one evidence dimension short. The struct has atomics, the layout creates contention surface, but cross-TU multiplicity didn't confirm broad usage. These are hypotheses. Treat them as such.
 
-The FL010 findings (overly strong atomic ordering) are architecture-aware: on x86-64's TSO memory model, `seq_cst` loads are free (plain MOV), so lshaz only flags stores and RMW operations where the XCHG/LOCK prefix cost is real. On ARM64, the analysis changes — every `seq_cst` operation carries a full `DMB ISH` barrier cost. The same source file can produce different diagnostics on different target architectures, which is the correct behavior.
+The **Speculative** findings are signals, not conclusions. Something in the source suggests a hazard but the confidence doesn't justify flagging it as a finding in any meaningful sense. They're there because suppressing them entirely means silent false negatives, and false negatives are worse than noisy output.
 
-None of this means Abseil has 256 performance problems. It means lshaz found 256 locations where hardware cost is latent in the source, ranging from confirmed coherence contention to speculative ordering inefficiencies. What you do with that signal depends on whether those paths are hot in your workload.
+The architecture-specific behavior is worth mentioning: on x86-64's TSO memory model, `seq_cst` loads are free, just a plain old MOV instruction. lshaz knows this. It only flags `seq_cst` stores and RMW operations where the `LOCK` prefix is real. On ARM64, the analysis changes completely - every `seq_cst` operation carries a full `DMB ISH` barrier. The same source file produces different diagnostics on different target architectures, because the hardware costs are genuinely different.
 
 ---
 
-## The Part No Other Static Analyzer Does
+## The Thing No Other Analyzer Does
 
-Every analyzer from clang-tidy to Coverity can tell you about use-after-free, uninitialized reads, and null dereferences. None of them generate statistically rigorous PMU experiments to validate their predictions.
+clang-tidy, Coverity, PVS-Studio — they'll tell you about use-after-free, uninitialized memory, null dereferences. None of them will tell you that your struct's field ordering is costing you 200 cycles per operation under contention. That's not their domain. Their domain is correctness. lshaz's domain is the gap between correct code and code that respects what the hardware actually does.
 
-For every diagnostic lshaz emits, it constructs a formal hypothesis: a null and alternative hypothesis, the specific hardware performance counters required to test it (`MEM_INST_RETIRED.LOCK_LOADS`, `L2_RQSTS.ALL_RFO`, `OFFCORE_REQUESTS.ALL_DATA_RD`), the statistical parameters ($\alpha=0.01$, power $=0.90$), and a complete experiment bundle — harness, Makefile, collection scripts — that an engineer can run to confirm or refute the prediction. Results feed back into a Bayesian confidence model that adjusts future predictions.
+And unlike every other static analyzer, lshaz doesn't just report a finding and move on. For every diagnostic, it constructs a formal hypothesis, with null and alternative, the specific PMU counters needed to test it (`MEM_INST_RETIRED.LOCK_LOADS`, `L2_RQSTS.ALL_RFO`, `OFFCORE_REQUESTS.ALL_DATA_RD`), the statistical parameters (α=0.01, power=0.90), and a complete experiment bundle you can run with `perf stat` or `perf c2c` to find out if the tool is right.
 
-The hypothesis engine exists because the fundamental limitation of static analysis is false positives. The correct response to that limitation is not to suppress warnings until the false positive rate is acceptable. It is to make the tool tell you how to find out if it's right.
+That last part is not a feature. It's an acknowledgment of a hard truth: static analysis produces false positives. The correct response to that isn't to tune the tool until the false positive rate is acceptable. It's to build the tool so it can tell you how to find out if it's wrong.
 
 ---
 
 ## Where To Find It
 
-lshaz is available at [github.com/abokhalill/lshaz](https://github.com/abokhalill/lshaz).
+lshaz is at [github.com/abokhalill/lshaz](https://github.com/abokhalill/lshaz).
 
-It builds against LLVM/Clang 18. A `compile_commands.json` is required. Running against your own codebase:
+Clang 18, compile_commands.json required. Point it at your codebase:
 
 ```bash
 lshaz scan --target-arch x86-64 /path/to/your/project
 ```
 
-The `lshaz diff` subcommand produces exit code 1 on new findings, which makes it a drop-in CI gate. SARIF output integrates directly with GitHub Code Scanning.
+`lshaz diff` exits 1 on new findings; drop it in CI and it becomes a gate. SARIF output goes directly to GitHub Code Scanning.
 
-Feedback, corrections, and counterexamples are welcome — especially cases where the hardware reasoning is wrong. The calibration system gets better with data.
+If you find cases where the hardware reasoning is wrong, that's the most valuable feedback the tool can receive. The calibration system exists precisely for that.
