@@ -10,7 +10,7 @@ description: "lshaz is a Clang/LLVM-based static analysis tool that detects micr
 
 One thing you and I can agree on: no software system is perfect on all aspects. In our unfortunate case, we discuss performance. Whether it's a naive struct spanning multiple cache lines, false sharing, an overly strong memory ordering being expensive for no beneficial reason, an unfriendly NUMA topology, you name it. We've all seen it. Okay maybe not all but these are generally NOT what you want in a latency sensitive pipeline.
 
-The tool presented, lshaz, is a static analyzer that maps code which compiles, looks correct, and even passes code review, to silent hardware failures. This blog delves particularly into the non-trivial findings on Abseil — a common C++ library by Google written by the most hardware-conscious engineers on the planet.
+The tool presented, lshaz, is a static analyzer that maps code which compiles, looks correct, and even passes code review, to silent hardware failures. This blog delves particularly into the non-trivial findings on Abseil, a common C++ library by Google written by the most hardware-conscious engineers on the planet.
 
 ---
 
@@ -18,7 +18,7 @@ The tool presented, lshaz, is a static analyzer that maps code which compiles, l
 
 Before we peek at what's under the Christmas tree, let's first take a step back and really understand what we're working with here. lshaz is a Clang/LLVM-based static analyzer that surfaces microarchitectural 'hazards' that standard compilers usually ignore.
 
-The main entry point uses `ASTContext` to query `ASTRecordLayout`. Sadly, this is where the abstraction ends. From this point, one `RecursiveASTVisitor` walks the AST, basically taking a stroll through your code. Every time it encounters a struct, class, or union, it stops — which is `CXXRecordDecl`. This allows it to compute the individual byte offsets at every field inside your struct. There are 15 individual rules, each mapping with a unique hardware mechanism.
+The main entry point uses `ASTContext` to query `ASTRecordLayout`. Sadly, this is where the abstraction ends. From this point, one `RecursiveASTVisitor` walks the AST, basically taking a stroll through your code. Every time it encounters a struct, class, or union, it stops, which is `CXXRecordDecl`. This allows it to compute the individual byte offsets at every field inside your struct. There are 15 individual rules, each mapping with a unique hardware mechanism.
 
 However, there's something you're probably wondering: what if most of these warnings are just complete false positives? What if the struct spanning multiple lines is a struct you access once a year anyways? What if a virtualized call gets devirtualized by the compiler? What about heap allocation that gets inlined? Essentially, how do we guarantee the tool is reliable at scale?
 
